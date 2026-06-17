@@ -1,0 +1,20 @@
+# ===========================================================================
+#  Future migration features
+#
+#  Ideas:
+#    migrate_roles(discord_token, discord_guild_id, fluxer_token, fluxer_guild_id)
+#        Copy role names, colors, permissions.
+#
+#    migrate_channel_structure(...)
+#        Recreate categories and channels with matching positions and topics.
+#
+#    migrate_emojis(...)
+#        Upload all Discord custom emojis to the target Fluxer server.
+#
+#    migrate_stickers(...)
+#        Upload all server stickers.
+#
+#    export_messages_json(discord_token, channel_id, output_path)
+#        Dump all messages to a JSON file for archival.
+#
+# ===========================================================================
