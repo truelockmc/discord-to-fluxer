@@ -9,18 +9,24 @@ lets the user select / deselect all and port the chosen ones.
 
 from __future__ import annotations
 
+import io
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from tkinter import messagebox
 from typing import Callable
 
 import customtkinter as ctk
+from PIL import Image
 
 from api.discord import discord_guilds
 from api.fluxer import fluxer_guilds
 from config import COLORS
 from migration.emojis import build_emoji_rows, port_emojis
 from ui.widgets import make_guild_panel, make_status_row
+from utils import download_image_bytes
+
+THUMB_SIZE = 28
 
 
 class EmojiView(ctk.CTkFrame):
@@ -44,6 +50,10 @@ class EmojiView(ctk.CTkFrame):
         self._running = False
         self._poll_after_id = None
 
+        self._thumb_cache: dict = {}  # emoji_id -> ctk.CTkImage
+        self._thumb_executor = ThreadPoolExecutor(max_workers=6)
+        self._grid_generation = 0  # bumped whenever the grid is rebuilt/cleared
+
         self._build_ui()
         self._poll_log()
 
@@ -56,6 +66,7 @@ class EmojiView(ctk.CTkFrame):
                 self.after_cancel(self._poll_after_id)
             except Exception:
                 pass
+        self._thumb_executor.shutdown(wait=False, cancel_futures=True)
         super().destroy()
 
     # -----------------------------------------------------------------------
@@ -342,6 +353,7 @@ class EmojiView(ctk.CTkFrame):
         threading.Thread(target=load, daemon=True).start()
 
     def _clear_emoji_grid(self):
+        self._grid_generation += 1
         for widget in self.emoji_scroll.winfo_children():
             widget.destroy()
         self._emoji_vars = {}
@@ -389,7 +401,7 @@ class EmojiView(ctk.CTkFrame):
             corner_radius=8,
         )
         cell.grid(row=r, column=c, sticky="ew", padx=6, pady=6)
-        cell.columnconfigure(1, weight=1)
+        cell.columnconfigure(2, weight=1)
 
         var = ctk.BooleanVar(value=not already)
         checkbox = ctk.CTkCheckBox(
@@ -408,6 +420,17 @@ class EmojiView(ctk.CTkFrame):
         if not already:
             self._emoji_vars[row["id"]] = var
 
+        thumb_label = ctk.CTkLabel(
+            cell,
+            text="",
+            width=THUMB_SIZE,
+            height=THUMB_SIZE,
+            fg_color=COLORS["card"],
+            corner_radius=6,
+        )
+        thumb_label.grid(row=0, column=1, padx=(0, 8), pady=10)
+        self._load_thumbnail(row, thumb_label, self._grid_generation)
+
         name_color = COLORS["muted"] if already else COLORS["text"]
         label_text = row["name"] if not already else f"{row['name']} (exists)"
         ctk.CTkLabel(
@@ -416,7 +439,42 @@ class EmojiView(ctk.CTkFrame):
             font=ctk.CTkFont(size=12),
             text_color=name_color,
             anchor="w",
-        ).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=10)
+        ).grid(row=0, column=2, sticky="ew", padx=(0, 10), pady=10)
+
+    def _load_thumbnail(self, row: dict, label: ctk.CTkLabel, generation: int):
+        emoji_id = row["id"]
+
+        cached = self._thumb_cache.get(emoji_id)
+        if cached is not None:
+            label.configure(image=cached)
+            return
+
+        def fetch():
+            try:
+                image_bytes = download_image_bytes(row["cdn_url"])
+                pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+                pil_image.thumbnail((THUMB_SIZE, THUMB_SIZE))
+            except Exception:
+                return  # leave the placeholder if the thumbnail can't be fetched
+
+            def apply():
+                # Ignore results from a grid that's since been cleared/rebuilt,
+                # or whose label widget no longer exists.
+                if generation != self._grid_generation:
+                    return
+                if not label.winfo_exists():
+                    return
+                ctk_image = ctk.CTkImage(
+                    light_image=pil_image,
+                    dark_image=pil_image,
+                    size=pil_image.size,
+                )
+                self._thumb_cache[emoji_id] = ctk_image
+                label.configure(image=ctk_image)
+
+            self.after(0, apply)
+
+        self._thumb_executor.submit(fetch)
 
     def _select_all(self):
         for var in self._emoji_vars.values():

@@ -8,9 +8,6 @@
 #    migrate_channel_structure(...)
 #        Recreate categories and channels with matching positions and topics.
 #
-#    migrate_emojis(...)
-#        Upload all Discord custom emojis to the target Fluxer server.
-#
 #    migrate_stickers(...)
 #        Upload all server stickers.
 #

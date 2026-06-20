@@ -54,3 +54,10 @@ def _download(url: str) -> tuple[bytes, str]:
     else:
         filename = url.split("?")[0].split("/")[-1] or "file"
     return r.content, filename
+
+
+def download_image_bytes(url: str, timeout: int = 15) -> bytes:
+    """Download raw image bytes from a URL (used for small UI thumbnails)."""
+    r = SESSION.get(url, timeout=timeout)
+    r.raise_for_status()
+    return r.content
