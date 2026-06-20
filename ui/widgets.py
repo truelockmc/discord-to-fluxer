@@ -136,6 +136,55 @@ def make_guild_panel(
     return guild_cb
 
 
+def _bind_entry_shortcuts(entry: ctk.CTkEntry):
+
+    # Explicitly wire Select All / Copy / Cut / Paste on a CTkEntry.
+
+    def select_all(_event=None):
+        entry.select_range(0, "end")
+        entry.icursor("end")
+        return "break"
+
+    def copy(_event=None):
+        try:
+            value = entry.get()[entry.index("sel.first") : entry.index("sel.last")]
+        except Exception:
+            value = entry.get()
+        entry.clipboard_clear()
+        entry.clipboard_append(value)
+        return "break"
+
+    def cut(_event=None):
+        copy(_event)
+        try:
+            entry.delete("sel.first", "sel.last")
+        except Exception:
+            entry.delete(0, "end")
+        return "break"
+
+    def paste(_event=None):
+        try:
+            clip = entry.clipboard_get()
+        except Exception:
+            return "break"
+        try:
+            entry.delete("sel.first", "sel.last")
+        except Exception:
+            pass
+        entry.insert("insert", clip)
+        return "break"
+
+    for modifier in ("Control", "Command"):
+        entry.bind(f"<{modifier}-a>", select_all)
+        entry.bind(f"<{modifier}-A>", select_all)
+        entry.bind(f"<{modifier}-c>", copy)
+        entry.bind(f"<{modifier}-C>", copy)
+        entry.bind(f"<{modifier}-x>", cut)
+        entry.bind(f"<{modifier}-X>", cut)
+        entry.bind(f"<{modifier}-v>", paste)
+        entry.bind(f"<{modifier}-V>", paste)
+
+
 def _open_token_dialog(
     parent,
     colors: dict,
@@ -150,7 +199,6 @@ def _open_token_dialog(
     dialog.resizable(False, False)
     dialog.configure(fg_color=colors["bg"])
     dialog.transient(parent.winfo_toplevel())
-    dialog.grab_set()
 
     ctk.CTkLabel(
         dialog,
@@ -159,19 +207,40 @@ def _open_token_dialog(
         text_color=colors["text"],
     ).pack(anchor="w", padx=20, pady=(20, 6))
 
+    entry_row = ctk.CTkFrame(dialog, fg_color="transparent")
+    entry_row.pack(padx=20, pady=(0, 16), fill="x")
+
     token_var = ctk.StringVar(value=current_value)
     entry = ctk.CTkEntry(
-        dialog,
+        entry_row,
         textvariable=token_var,
         show="*",
         placeholder_text="Bot token",
         fg_color=colors["card"],
         border_color=colors["border"],
         text_color=colors["text"],
-        width=380,
     )
-    entry.pack(padx=20, pady=(0, 16))
-    entry.focus_set()
+    entry.pack(side="left", fill="x", expand=True)
+    _bind_entry_shortcuts(entry)
+
+    visible = {"on": False}
+
+    def _toggle_visibility():
+        visible["on"] = not visible["on"]
+        entry.configure(show="" if visible["on"] else "*")
+        toggle_btn.configure(text="\U0001f648" if visible["on"] else "\U0001f441")
+
+    toggle_btn = ctk.CTkButton(
+        entry_row,
+        text="\U0001f441",
+        width=32,
+        height=28,
+        fg_color=colors["card"],
+        hover_color=colors["border"],
+        text_color=colors["text"],
+        command=_toggle_visibility,
+    )
+    toggle_btn.pack(side="left", padx=(6, 0))
 
     btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
     btn_row.pack(padx=20, fill="x")
@@ -201,6 +270,14 @@ def _open_token_dialog(
 
     entry.bind("<Return>", lambda e: _save())
     dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+    # The window must actually be drawn/mapped on screen before grab_set()
+    # Force a draw, then focus + grab.
+    dialog.update_idletasks()
+    dialog.deiconify()
+    dialog.lift()
+    entry.focus_set()
+    dialog.after(50, dialog.grab_set)
 
 
 def make_status_row(
