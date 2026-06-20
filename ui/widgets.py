@@ -54,12 +54,9 @@ def make_panel(
         dropdown_text_color=colors["text"],
         font=ctk.CTkFont(size=13),
         state="disabled",
+        command=on_guild_select,
     )
     guild_cb.pack(fill="x", padx=16, pady=(0, 8))
-    guild_cb.bind(
-        "<<ComboboxSelected>>",
-        lambda e, cb=guild_cb: on_guild_select(cb.get()),
-    )
 
     ctk.CTkLabel(
         frame,
@@ -132,12 +129,9 @@ def make_guild_panel(
         dropdown_text_color=colors["text"],
         font=ctk.CTkFont(size=13),
         state="disabled",
+        command=on_guild_select,
     )
     guild_cb.pack(fill="x", padx=16, pady=(0, 16))
-    guild_cb.bind(
-        "<<ComboboxSelected>>",
-        lambda e, cb=guild_cb: on_guild_select(cb.get()),
-    )
 
     return guild_cb
 
