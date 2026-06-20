@@ -20,7 +20,7 @@ from api.discord import discord_guilds
 from api.fluxer import fluxer_guilds
 from config import COLORS
 from migration.emojis import build_emoji_rows, port_emojis
-from ui.widgets import make_guild_panel, make_token_row
+from ui.widgets import make_guild_panel, make_status_row
 
 
 class EmojiView(ctk.CTkFrame):
@@ -75,26 +75,31 @@ class EmojiView(ctk.CTkFrame):
         )
         back_btn.pack(anchor="w", pady=(0, 8))
 
+        title_row = ctk.CTkFrame(self, fg_color="transparent")
+        title_row.pack(fill="x", pady=(0, 12))
+
         ctk.CTkLabel(
-            self,
+            title_row,
             text="Emojis",
             font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
             text_color=COLORS["text"],
-        ).pack(anchor="w", pady=(0, 12))
+        ).pack(side="left")
+
+        self.status_row = make_status_row(
+            title_row,
+            COLORS,
+            self.cfg.get("discord_token", ""),
+            self.cfg.get("fluxer_token", ""),
+            on_token_change=self._on_token_change,
+            on_reload=self._on_load_servers,
+        )
+        self.status_row.pack(side="left", padx=(16, 0))
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True)
         body.columnconfigure((0, 1), weight=1, uniform="col")
         body.rowconfigure(1, weight=0)
         body.rowconfigure(2, weight=1)
-
-        self.discord_token_var, self.fluxer_token_var, self.load_btn = make_token_row(
-            body,
-            COLORS,
-            self.cfg.get("discord_token", ""),
-            self.cfg.get("fluxer_token", ""),
-            self._on_load_servers,
-        )
 
         self.discord_guild_cb = make_guild_panel(
             body,
@@ -258,17 +263,18 @@ class EmojiView(ctk.CTkFrame):
     # Load servers
     # -----------------------------------------------------------------------
 
-    def _on_load_servers(self):
-        self.cfg["discord_token"] = self.discord_token_var.get().strip()
-        self.cfg["fluxer_token"] = self.fluxer_token_var.get().strip()
+    def _on_token_change(self, which: str, value: str):
+        self.cfg[f"{which}_token"] = value
         self.save_cfg(self.cfg)
+
+    def _on_load_servers(self):
         self._load_servers()
 
     def _load_servers(self):
         if not self.cfg["discord_token"] or not self.cfg["fluxer_token"]:
             messagebox.showerror("Error", "Please enter both bot tokens.")
             return
-        self.load_btn.configure(text="Loading...", state="disabled")
+        self.status_row.reload_btn.configure(state="disabled")
         threading.Thread(target=self._load_servers_thread, daemon=True).start()
 
     def _load_servers_thread(self):
@@ -287,16 +293,14 @@ class EmojiView(ctk.CTkFrame):
         except Exception as exc:
             err = str(exc)
             self._log(f"Error: {err}")
-            self.after(
-                0, lambda: self.load_btn.configure(text="Load servers", state="normal")
-            )
+            self.after(0, lambda: self.status_row.reload_btn.configure(state="normal"))
 
     def _update_guild_dropdowns(self, d_names: list, f_names: list):
         self.discord_guild_cb.configure(values=d_names or ["(none)"], state="normal")
         self.discord_guild_cb.set(d_names[0] if d_names else "")
         self.fluxer_guild_cb.configure(values=f_names or ["(none)"], state="normal")
         self.fluxer_guild_cb.set(f_names[0] if f_names else "")
-        self.load_btn.configure(text="Reload", state="normal")
+        self.status_row.reload_btn.configure(state="normal")
         self._maybe_load_emojis()
 
     def _on_guild_select(self, side: str, guild_name: str):
