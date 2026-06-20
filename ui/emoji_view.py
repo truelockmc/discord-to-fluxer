@@ -23,6 +23,7 @@ from api.discord import discord_guilds
 from api.fluxer import fluxer_guilds
 from config import COLORS
 from migration.emojis import build_emoji_rows, port_emojis
+from net import status_code_of
 from ui.widgets import make_guild_panel, make_status_row
 from utils import download_image_bytes
 
@@ -289,22 +290,38 @@ class EmojiView(ctk.CTkFrame):
         threading.Thread(target=self._load_servers_thread, daemon=True).start()
 
     def _load_servers_thread(self):
+        d_names: list = []
+        f_names: list = []
+
+        self._log("Connecting to Discord...")
         try:
-            self._log("Connecting to Discord...")
             self._discord_guilds = discord_guilds(self.cfg["discord_token"])
-            self._log(f"  {len(self._discord_guilds)} Discord servers found")
-
-            self._log("Connecting to Fluxer...")
-            self._fluxer_guilds = fluxer_guilds(self.cfg["fluxer_token"])
-            self._log(f"  {len(self._fluxer_guilds)} Fluxer servers found")
-
             d_names = [g["name"] for g in self._discord_guilds]
-            f_names = [g["name"] for g in self._fluxer_guilds]
-            self.after(0, lambda: self._update_guild_dropdowns(d_names, f_names))
+            self._log(f"  {len(self._discord_guilds)} Discord servers found")
+            self.after(0, lambda: self.status_row.mark_valid("discord"))
         except Exception as exc:
-            err = str(exc)
-            self._log(f"Error: {err}")
-            self.after(0, lambda: self.status_row.reload_btn.configure(state="normal"))
+            self._discord_guilds = []
+            if status_code_of(exc) == 401:
+                self._log("  Discord token is invalid (401 Unauthorized)")
+                self.after(0, lambda: self.status_row.mark_invalid("discord"))
+            else:
+                self._log(f"  Error: {exc}")
+
+        self._log("Connecting to Fluxer...")
+        try:
+            self._fluxer_guilds = fluxer_guilds(self.cfg["fluxer_token"])
+            f_names = [g["name"] for g in self._fluxer_guilds]
+            self._log(f"  {len(self._fluxer_guilds)} Fluxer servers found")
+            self.after(0, lambda: self.status_row.mark_valid("fluxer"))
+        except Exception as exc:
+            self._fluxer_guilds = []
+            if status_code_of(exc) == 401:
+                self._log("  Fluxer token is invalid (401 Unauthorized)")
+                self.after(0, lambda: self.status_row.mark_invalid("fluxer"))
+            else:
+                self._log(f"  Error: {exc}")
+
+        self.after(0, lambda: self._update_guild_dropdowns(d_names, f_names))
 
     def _update_guild_dropdowns(self, d_names: list, f_names: list):
         self.discord_guild_cb.configure(values=d_names or ["(none)"], state="normal")

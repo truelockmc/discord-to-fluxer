@@ -291,19 +291,34 @@ def make_status_row(
 
     row = ctk.CTkFrame(parent, fg_color="transparent")
 
-    def _badge_style(has_token: bool) -> dict:
-        return (
-            {"text": "\u2713", "fg_color": colors["success"], "hover_color": "#2d8a50"}
-            if has_token
-            else {
+    # Badge states:
+    #   "empty"      -> no token set                       (red, X)
+    #   "unverified" -> token set, not checked against API  (green, check)
+    #   "invalid"    -> token set, last API call returned 401 (orange, !)
+    def _badge_style(state: str) -> dict:
+        if state == "empty":
+            return {
                 "text": "\u2715",
                 "fg_color": colors["danger"],
                 "hover_color": "#c63537",
             }
-        )
+        if state == "invalid":
+            return {
+                "text": "!",
+                "fg_color": colors["warn"],
+                "hover_color": "#d68f13",
+            }
+        return {
+            "text": "\u2713",
+            "fg_color": colors["success"],
+            "hover_color": "#2d8a50",
+        }
+
+    def _state_for(has_token: bool) -> str:
+        return "unverified" if has_token else "empty"
 
     def _make_badge(
-        label: str, has_token: bool, on_click: Callable[[], None]
+        label: str, initial_state: str, on_click: Callable[[], None]
     ) -> ctk.CTkButton:
         wrap = ctk.CTkFrame(row, fg_color="transparent")
         wrap.pack(side="left", padx=(0, 10))
@@ -315,7 +330,7 @@ def make_status_row(
             text_color=colors["muted"],
         ).pack(side="left", padx=(0, 6))
 
-        style = _badge_style(has_token)
+        style = _badge_style(initial_state)
         badge = ctk.CTkButton(
             wrap,
             text=style["text"],
@@ -330,8 +345,8 @@ def make_status_row(
         badge.pack(side="left")
         return badge
 
-    def _set_badge(badge: ctk.CTkButton, has_token: bool):
-        style = _badge_style(has_token)
+    def _set_badge(badge: ctk.CTkButton, state: str):
+        style = _badge_style(state)
         badge.configure(
             text=style["text"],
             fg_color=style["fg_color"],
@@ -348,7 +363,7 @@ def make_status_row(
             state["discord"],
             on_save=lambda v: (
                 state.__setitem__("discord", v),
-                _set_badge(discord_badge, bool(v)),
+                _set_badge(discord_badge, _state_for(bool(v))),
                 on_token_change("discord", v),
             ),
         )
@@ -361,13 +376,17 @@ def make_status_row(
             state["fluxer"],
             on_save=lambda v: (
                 state.__setitem__("fluxer", v),
-                _set_badge(fluxer_badge, bool(v)),
+                _set_badge(fluxer_badge, _state_for(bool(v))),
                 on_token_change("fluxer", v),
             ),
         )
 
-    discord_badge = _make_badge("DISCORD", bool(discord_token), _on_discord_click)
-    fluxer_badge = _make_badge("FLUXER", bool(fluxer_token), _on_fluxer_click)
+    discord_badge = _make_badge(
+        "DISCORD", _state_for(bool(discord_token)), _on_discord_click
+    )
+    fluxer_badge = _make_badge(
+        "FLUXER", _state_for(bool(fluxer_token)), _on_fluxer_click
+    )
 
     reload_btn = ctk.CTkButton(
         row,
@@ -382,5 +401,15 @@ def make_status_row(
     )
     reload_btn.pack(side="left", padx=(4, 0))
 
+    def mark_valid(which: str):
+        badge = discord_badge if which == "discord" else fluxer_badge
+        _set_badge(badge, _state_for(bool(state[which])))
+
+    def mark_invalid(which: str):
+        badge = discord_badge if which == "discord" else fluxer_badge
+        _set_badge(badge, "invalid")
+
     row.reload_btn = reload_btn
+    row.mark_valid = mark_valid
+    row.mark_invalid = mark_invalid
     return row

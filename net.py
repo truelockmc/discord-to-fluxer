@@ -87,3 +87,10 @@ def _raise_for_status_verbose(r: requests.Response) -> None:
         except Exception:
             body = r.text[:300]
         raise RuntimeError(f"HTTP {r.status_code}: {body}")
+
+
+def status_code_of(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    if response is not None:
+        return getattr(response, "status_code", None)
+    return None
