@@ -1,5 +1,5 @@
 """
-ui/home.py - landing screen: choose what to port (messages, emojis ...).
+ui/home.py - landing screen: choose what to port (messages, emojis, ...).
 """
 
 from __future__ import annotations
@@ -55,7 +55,6 @@ class HomeView(ctk.CTkFrame):
             lambda: self.on_choose("roles"),
             row=1,
             col=0,
-            enabled=False,
         )
         self._make_card(
             grid,

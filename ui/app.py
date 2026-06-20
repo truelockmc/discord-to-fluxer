@@ -15,6 +15,7 @@ from config import COLORS, load_env, save_env
 from ui.emoji_view import EmojiView
 from ui.home import HomeView
 from ui.messages_view import MessagesView
+from ui.role_view import RoleView
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -78,6 +79,15 @@ class App(ctk.CTk):
         elif choice == "emojis":
             self._swap_view(
                 EmojiView(
+                    self._body,
+                    cfg=self.cfg,
+                    save_cfg=self._save_cfg,
+                    on_back=self._show_home,
+                )
+            )
+        elif choice == "roles":
+            self._swap_view(
+                RoleView(
                     self._body,
                     cfg=self.cfg,
                     save_cfg=self._save_cfg,

@@ -37,6 +37,12 @@ def discord_guild_emojis(token: str, guild_id: str) -> list:
     return guild.get("emojis", [])
 
 
+def discord_guild_roles(token: str, guild_id: str) -> list:
+    roles = _get(f"{DISCORD_BASE}/guilds/{guild_id}/roles", _discord_headers(token))
+    roles = [r for r in roles if r.get("name") != "@everyone"]  # exclude @everyone
+    return sorted(roles, key=lambda r: r.get("position", 0), reverse=True)
+
+
 def discord_messages_all(token: str, channel_id: str, log_fn=None) -> list:
     """Fetch every message in a channel in chronological order."""
     messages, before = [], None

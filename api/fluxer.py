@@ -82,6 +82,58 @@ def fluxer_create_emoji(token: str, guild_id: str, name: str, image_url: str) ->
 
 
 # ---------------------------------------------------------------------------
+# Roles
+# ---------------------------------------------------------------------------
+
+
+def fluxer_guild_roles_raw(token: str, guild_id: str) -> list:
+    """Return the raw list of role objects for a Fluxer guild."""
+    try:
+        data = _get(f"{FLUXER_BASE}/guilds/{guild_id}/roles", _fluxer_headers(token))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def fluxer_create_role(
+    token: str, guild_id: str, name: str, color: int, permissions: str
+) -> dict:
+    """
+    Create a new role on a Fluxer guild with the given name, color, and
+    permission bitfield. Discord (and Fluxer, mirroring it) always inserts
+    newly created roles directly above @everyone; ordering across multiple
+    created roles is fixed up afterwards via fluxer_reorder_roles.
+    """
+    payload = {
+        "name": name,
+        "color": color,
+        "permissions": permissions,
+        "hoist": False,
+        "mentionable": False,
+    }
+    return _post(
+        f"{FLUXER_BASE}/guilds/{guild_id}/roles", _fluxer_headers(token), payload
+    )
+
+
+def fluxer_reorder_roles(token: str, guild_id: str, role_id_to_position: dict) -> None:
+    payload = [
+        {"id": role_id, "position": position}
+        for role_id, position in role_id_to_position.items()
+    ]
+    try:
+        r = SESSION.patch(
+            f"{FLUXER_BASE}/guilds/{guild_id}/roles",
+            headers=_fluxer_headers(token),
+            json=payload,
+            timeout=25,
+        )
+        r.raise_for_status()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Webhooks
 # ---------------------------------------------------------------------------
 
