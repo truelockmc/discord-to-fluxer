@@ -1,20 +1,20 @@
 """
 ui/app.py - main application window.
+
+Acts as a thin shell that swaps between the home screen and the
+feature-specific views (messages / emojis). Each view manages its own
+state and background threads; the shell only holds the shared cfg dict
+(tokens) and handles navigation.
 """
 
 from __future__ import annotations
 
-import queue
-import threading
-from tkinter import messagebox
-
 import customtkinter as ctk
 
-from api.discord import discord_channels, discord_guilds
-from api.fluxer import fluxer_channels, fluxer_guilds
 from config import COLORS, load_env, save_env
-from migration import migrate_channel
-from ui.widgets import make_panel
+from ui.emoji_view import EmojiView
+from ui.home import HomeView
+from ui.messages_view import MessagesView
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -24,338 +24,63 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Discord -> Fluxer Migrator")
-        self.geometry("920x700")
-        self.minsize(820, 620)
+        self.geometry("960x720")
+        self.minsize(860, 640)
         self.configure(fg_color=COLORS["bg"])
 
         self.cfg = load_env()
-        self.log_queue: queue.Queue = queue.Queue()
+        self._current_view = None
 
-        self._discord_guilds: list = []
-        self._fluxer_guilds: list = []
-        self._discord_channels: list = []
-        self._fluxer_channels: list = []
-        self._running = False
-
-        self._build_ui()
-        self._poll_log()
-
-        if self.cfg["discord_token"] and self.cfg["fluxer_token"]:
-            self.after(300, self._load_servers)
-
-    # -----------------------------------------------------------------------
-    # UI construction
-    # -----------------------------------------------------------------------
-
-    def _build_ui(self):
-        # Header bar
-        header = ctk.CTkFrame(
+        self._header = ctk.CTkFrame(
             self, fg_color=COLORS["surface"], corner_radius=0, height=56
         )
-        header.pack(fill="x")
-        header.pack_propagate(False)
+        self._header.pack(fill="x")
+        self._header.pack_propagate(False)
         ctk.CTkLabel(
-            header,
+            self._header,
             text="  Discord -> Fluxer Migrator",
             font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
             text_color=COLORS["text"],
         ).pack(side="left", padx=20)
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=20, pady=16)
-        body.columnconfigure((0, 1), weight=1, uniform="col")
-        body.rowconfigure(1, weight=1)
+        self._body = ctk.CTkFrame(self, fg_color="transparent")
+        self._body.pack(fill="both", expand=True, padx=20, pady=16)
 
-        # Token row
-        token_row = ctk.CTkFrame(body, fg_color=COLORS["surface"], corner_radius=12)
-        token_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        token_row.columnconfigure((1, 3), weight=1)
-
-        def _label(parent, text, col):
-            ctk.CTkLabel(
-                parent,
-                text=text,
-                font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=COLORS["muted"],
-            ).grid(row=0, column=col, padx=(16, 4), pady=14, sticky="w")
-
-        _label(token_row, "DISCORD BOT TOKEN", 0)
-        self.discord_token_var = ctk.StringVar(value=self.cfg.get("discord_token", ""))
-        ctk.CTkEntry(
-            token_row,
-            textvariable=self.discord_token_var,
-            show="*",
-            placeholder_text="Bot token",
-            fg_color=COLORS["card"],
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
-        ).grid(row=0, column=1, padx=(0, 20), pady=14, sticky="ew")
-
-        _label(token_row, "FLUXER BOT TOKEN", 2)
-        self.fluxer_token_var = ctk.StringVar(value=self.cfg.get("fluxer_token", ""))
-        ctk.CTkEntry(
-            token_row,
-            textvariable=self.fluxer_token_var,
-            show="*",
-            placeholder_text="Bot token",
-            fg_color=COLORS["card"],
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
-        ).grid(row=0, column=3, padx=(0, 16), pady=14, sticky="ew")
-
-        self.load_btn = ctk.CTkButton(
-            token_row,
-            text="Load servers",
-            width=130,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent2"],
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._on_load_servers,
-        )
-        self.load_btn.grid(row=0, column=4, padx=(0, 16), pady=14)
-
-        # Server/channel selection panels
-        discord_cbs = make_panel(
-            body,
-            "Discord  -  Source",
-            0,
-            on_guild_select=lambda name: self._on_guild_select("discord", name),
-            colors=COLORS,
-        )
-        self.discord_guild_cb, self.discord_channel_cb = discord_cbs
-
-        fluxer_cbs = make_panel(
-            body,
-            "Fluxer  -  Destination",
-            1,
-            on_guild_select=lambda name: self._on_guild_select("fluxer", name),
-            colors=COLORS,
-        )
-        self.fluxer_guild_cb, self.fluxer_channel_cb = fluxer_cbs
-
-        # Log box
-        log_frame = ctk.CTkFrame(body, fg_color=COLORS["surface"], corner_radius=12)
-        log_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(14, 0))
-        log_frame.columnconfigure(0, weight=1)
-
-        log_header = ctk.CTkFrame(log_frame, fg_color="transparent")
-        log_header.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 0))
-        ctk.CTkLabel(
-            log_header,
-            text="LOG",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=COLORS["muted"],
-        ).pack(side="left")
-        self.progress_label = ctk.CTkLabel(
-            log_header,
-            text="",
-            font=ctk.CTkFont(size=11),
-            text_color=COLORS["warn"],
-        )
-        self.progress_label.pack(side="right")
-
-        self.log_box = ctk.CTkTextbox(
-            log_frame,
-            height=155,
-            fg_color=COLORS["card"],
-            text_color=COLORS["text"],
-            font=ctk.CTkFont(family="Consolas", size=12),
-            border_width=0,
-            corner_radius=8,
-        )
-        self.log_box.grid(row=1, column=0, sticky="ew", padx=12, pady=(4, 10))
-        self.log_box.configure(state="disabled")
-
-        # Start row
-        btn_row = ctk.CTkFrame(body, fg_color="transparent")
-        btn_row.grid(row=3, column=0, columnspan=2, pady=(12, 0))
-
-        self.progress_bar = ctk.CTkProgressBar(
-            btn_row,
-            width=360,
-            height=6,
-            fg_color=COLORS["card"],
-            progress_color=COLORS["accent"],
-        )
-        self.progress_bar.pack(side="left", padx=(0, 16))
-        self.progress_bar.set(0)
-
-        self.start_btn = ctk.CTkButton(
-            btn_row,
-            text="Start migration",
-            width=200,
-            height=42,
-            fg_color=COLORS["success"],
-            hover_color="#2d8a50",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            command=self._on_start,
-        )
-        self.start_btn.pack(side="left")
+        self._show_home()
 
     # -----------------------------------------------------------------------
-    # Log
+    # Navigation
     # -----------------------------------------------------------------------
 
-    def _log(self, msg: str):
-        self.log_queue.put(msg)
+    def _save_cfg(self, cfg: dict):
+        self.cfg = cfg
+        save_env(cfg)
 
-    def _poll_log(self):
-        while not self.log_queue.empty():
-            msg = self.log_queue.get_nowait()
-            self.log_box.configure(state="normal")
-            self.log_box.insert("end", msg + "\n")
-            self.log_box.see("end")
-            self.log_box.configure(state="disabled")
-        self.after(100, self._poll_log)
+    def _swap_view(self, view: ctk.CTkFrame):
+        if self._current_view is not None:
+            self._current_view.destroy()
+        self._current_view = view
+        view.pack(fill="both", expand=True)
 
-    # -----------------------------------------------------------------------
-    # Load servers
-    # -----------------------------------------------------------------------
+    def _show_home(self):
+        self._swap_view(HomeView(self._body, on_choose=self._on_choose))
 
-    def _on_load_servers(self):
-        self.cfg["discord_token"] = self.discord_token_var.get().strip()
-        self.cfg["fluxer_token"] = self.fluxer_token_var.get().strip()
-        save_env(self.cfg)
-        self._load_servers()
-
-    def _load_servers(self):
-        if not self.cfg["discord_token"] or not self.cfg["fluxer_token"]:
-            messagebox.showerror("Error", "Please enter both bot tokens.")
-            return
-        self.load_btn.configure(text="Loading...", state="disabled")
-        threading.Thread(target=self._load_servers_thread, daemon=True).start()
-
-    def _load_servers_thread(self):
-        try:
-            self._log("Connecting to Discord...")
-            self._discord_guilds = discord_guilds(self.cfg["discord_token"])
-            self._log(f"  {len(self._discord_guilds)} Discord servers found")
-
-            self._log("Connecting to Fluxer...")
-            self._fluxer_guilds = fluxer_guilds(self.cfg["fluxer_token"])
-            self._log(f"  {len(self._fluxer_guilds)} Fluxer servers found")
-
-            d_names = [g["name"] for g in self._discord_guilds]
-            f_names = [g["name"] for g in self._fluxer_guilds]
-            self.after(0, lambda: self._update_guild_dropdowns(d_names, f_names))
-        except Exception as exc:
-            err = str(exc)
-            self._log(f"Error: {err}")
-            self.after(
-                0, lambda: self.load_btn.configure(text="Load servers", state="normal")
-            )
-
-    def _update_guild_dropdowns(self, d_names: list, f_names: list):
-        self.discord_guild_cb.configure(values=d_names or ["(none)"], state="normal")
-        self.discord_guild_cb.set(d_names[0] if d_names else "")
-        self.fluxer_guild_cb.configure(values=f_names or ["(none)"], state="normal")
-        self.fluxer_guild_cb.set(f_names[0] if f_names else "")
-        self.load_btn.configure(text="Reload", state="normal")
-
-        if d_names:
-            self._on_guild_select("discord", d_names[0])
-        if f_names:
-            self._on_guild_select("fluxer", f_names[0])
-
-    def _on_guild_select(self, side: str, guild_name: str):
-        guilds_list = self._discord_guilds if side == "discord" else self._fluxer_guilds
-        token = (
-            self.cfg["discord_token"] if side == "discord" else self.cfg["fluxer_token"]
-        )
-        fetch_fn = discord_channels if side == "discord" else fluxer_channels
-        cb = self.discord_channel_cb if side == "discord" else self.fluxer_channel_cb
-
-        guild = next((g for g in guilds_list if g["name"] == guild_name), None)
-        if not guild:
-            return
-
-        cb.configure(values=["Loading..."], state="disabled")
-
-        def load():
-            try:
-                channels = fetch_fn(token, guild["id"])
-                names = [f"# {c['name']}" for c in channels]
-                if side == "discord":
-                    self._discord_channels = channels
-                else:
-                    self._fluxer_channels = channels
-                self.after(
-                    0, lambda: cb.configure(values=names or ["(none)"], state="normal")
+    def _on_choose(self, choice: str):
+        if choice == "messages":
+            self._swap_view(
+                MessagesView(
+                    self._body,
+                    cfg=self.cfg,
+                    save_cfg=self._save_cfg,
+                    on_back=self._show_home,
                 )
-                self.after(0, lambda: cb.set(names[0] if names else ""))
-            except Exception as exc:
-                err = str(exc)
-                self._log(f"Channel load error ({side}): {err}")
-
-        threading.Thread(target=load, daemon=True).start()
-
-    # -----------------------------------------------------------------------
-    # Migration
-    # -----------------------------------------------------------------------
-
-    def _get_channel(self, side: str) -> dict | None:
-        if side == "discord":
-            name = self.discord_channel_cb.get().lstrip("# ")
-            return next((c for c in self._discord_channels if c["name"] == name), None)
-        else:
-            name = self.fluxer_channel_cb.get().lstrip("# ")
-            return next((c for c in self._fluxer_channels if c["name"] == name), None)
-
-    def _on_start(self):
-        if self._running:
-            return
-        src = self._get_channel("discord")
-        dst = self._get_channel("fluxer")
-        if not src or not dst:
-            messagebox.showerror(
-                "Error", "Please select both a source and destination channel."
             )
-            return
-        self._running = True
-        self.start_btn.configure(state="disabled", text="Migrating...")
-        self.progress_bar.set(0)
-        threading.Thread(
-            target=self._migrate_thread, args=(src, dst), daemon=True
-        ).start()
-
-    def _migrate_thread(self, src_ch: dict, dst_ch: dict):
-        try:
-            total = migrate_channel(
-                discord_token=self.cfg["discord_token"],
-                fluxer_token=self.cfg["fluxer_token"],
-                src_channel=src_ch,
-                dst_channel=dst_ch,
-                fluxer_guilds=self._fluxer_guilds,
-                fluxer_guild_name=self.fluxer_guild_cb.get(),
-                log_fn=self._log,
-                progress_fn=self._on_progress,
-            )
-            if total > 0:
-                self.after(
-                    0,
-                    lambda: messagebox.showinfo(
-                        "Done", f"{total} messages migrated successfully."
-                    ),
+        elif choice == "emojis":
+            self._swap_view(
+                EmojiView(
+                    self._body,
+                    cfg=self.cfg,
+                    save_cfg=self._save_cfg,
+                    on_back=self._show_home,
                 )
-        except Exception as exc:
-            err = str(exc)
-            self._log(f"\nError: {err}")
-            self.after(0, lambda m=err: messagebox.showerror("Error", m))
-        finally:
-            self._finish()
-
-    def _on_progress(self, current: int, total: int):
-        progress = current / total
-        self.after(
-            0,
-            lambda p=progress, n=current: (
-                self.progress_bar.set(p),
-                self.progress_label.configure(text=f"{n}/{total}"),
-            ),
-        )
-
-    def _finish(self):
-        self._running = False
-        self.after(
-            0, lambda: self.start_btn.configure(state="normal", text="Start migration")
-        )
+            )

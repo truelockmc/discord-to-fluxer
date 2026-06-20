@@ -28,6 +28,15 @@ def discord_channels(token: str, guild_id: str) -> list:
     )
 
 
+def discord_guild_emojis(token: str, guild_id: str) -> list:
+    """Return the list of custom emoji objects for a Discord guild."""
+    guild = _get(
+        f"{DISCORD_BASE}/guilds/{guild_id}?with_counts=false",
+        _discord_headers(token),
+    )
+    return guild.get("emojis", [])
+
+
 def discord_messages_all(token: str, channel_id: str, log_fn=None) -> list:
     """Fetch every message in a channel in chronological order."""
     messages, before = [], None

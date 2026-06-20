@@ -1,5 +1,5 @@
 """
-api/fluxer.py  Fluxer API calls (guilds, channels, webhooks, emojis).
+api/fluxer.py - Fluxer API calls (guilds, channels, webhooks, emojis).
 """
 
 from __future__ import annotations
@@ -49,6 +49,36 @@ def fluxer_guild_emojis(token: str, guild_id: str) -> dict:
     except Exception:
         pass
     return {}
+
+
+def fluxer_guild_emojis_raw(token: str, guild_id: str) -> list:
+    """Return the raw list of custom emoji objects for a Fluxer guild."""
+    try:
+        data = _get(f"{FLUXER_BASE}/guilds/{guild_id}/emojis", _fluxer_headers(token))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def fluxer_create_emoji(token: str, guild_id: str, name: str, image_url: str) -> dict:
+    """
+    Upload a new custom emoji to a Fluxer guild.
+
+    `image_url` is downloaded (e.g. from the Discord CDN) and re-uploaded as a
+    base64 data URI, same approach as webhook avatars.
+    """
+    r = SESSION.get(image_url, timeout=15)
+    r.raise_for_status()
+    mime = r.headers.get("Content-Type", "image/png").split(";")[0]
+    b64 = base64.b64encode(r.content).decode()
+
+    payload = {
+        "name": name,
+        "image": f"data:{mime};base64,{b64}",
+    }
+    return _post(
+        f"{FLUXER_BASE}/guilds/{guild_id}/emojis", _fluxer_headers(token), payload
+    )
 
 
 # ---------------------------------------------------------------------------
