@@ -16,6 +16,7 @@ from api.fluxer import fluxer_channels, fluxer_guilds
 from config import COLORS
 from migration.messages import migrate_channel
 from net import status_code_of
+from permissions import permission_error_message
 from ui.widgets import make_panel, make_status_row
 
 
@@ -180,6 +181,28 @@ class MessagesView(ctk.CTkFrame):
     def _log(self, msg: str):
         self.log_queue.put(msg)
 
+    def _report_error(
+        self,
+        action: str,
+        exc: Exception,
+        fallback_prefix: str = "Error",
+        always_popup: bool = False,
+    ):
+        """
+        Log the error and, if it's a 403 permission issue, show a specific
+        popup explaining which permission is missing. Other errors are
+        logged, and also shown as a generic popup if always_popup=True
+        (used at call sites that already showed a popup for any failure).
+        """
+        perm_msg = permission_error_message(action, exc)
+        if perm_msg:
+            self._log(f"  {perm_msg}")
+            self.after(0, lambda: messagebox.showerror("Missing permission", perm_msg))
+        else:
+            self._log(f"{fallback_prefix}: {exc}")
+            if always_popup:
+                self.after(0, lambda m=str(exc): messagebox.showerror("Error", m))
+
     def _poll_log(self):
         while not self.log_queue.empty():
             msg = self.log_queue.get_nowait()
@@ -223,7 +246,7 @@ class MessagesView(ctk.CTkFrame):
                 self._log("  Discord token is invalid (401 Unauthorized)")
                 self.after(0, lambda: self.status_row.mark_invalid("discord"))
             else:
-                self._log(f"  Error: {exc}")
+                self._report_error("load_discord_guilds", exc, "  Error")
 
         self._log("Connecting to Fluxer...")
         try:
@@ -237,7 +260,7 @@ class MessagesView(ctk.CTkFrame):
                 self._log("  Fluxer token is invalid (401 Unauthorized)")
                 self.after(0, lambda: self.status_row.mark_invalid("fluxer"))
             else:
-                self._log(f"  Error: {exc}")
+                self._report_error("load_fluxer_guilds", exc, "  Error")
 
         self.after(0, lambda: self._update_guild_dropdowns(d_names, f_names))
 
@@ -280,8 +303,12 @@ class MessagesView(ctk.CTkFrame):
                 )
                 self.after(0, lambda: cb.set(names[0] if names else ""))
             except Exception as exc:
-                err = str(exc)
-                self._log(f"Channel load error ({side}): {err}")
+                action = (
+                    "load_discord_channels"
+                    if side == "discord"
+                    else "load_fluxer_channels"
+                )
+                self._report_error(action, exc, f"Channel load error ({side})")
 
         threading.Thread(target=load, daemon=True).start()
 
@@ -334,9 +361,9 @@ class MessagesView(ctk.CTkFrame):
                     ),
                 )
         except Exception as exc:
-            err = str(exc)
-            self._log(f"\nError: {err}")
-            self.after(0, lambda m=err: messagebox.showerror("Error", m))
+            self._report_error(
+                "create_fluxer_webhook", exc, "\nError", always_popup=True
+            )
         finally:
             self._finish()
 

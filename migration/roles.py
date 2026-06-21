@@ -11,6 +11,7 @@ from typing import Callable
 
 from api.discord import discord_guild_roles
 from api.fluxer import fluxer_create_role, fluxer_guild_roles_raw, fluxer_reorder_roles
+from net import status_code_of
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int], None]  # (current, total)
@@ -96,6 +97,8 @@ def port_roles(
             log_fn(f"  Ported: {name}")
             succeeded += 1
         except Exception as exc:
+            if status_code_of(exc) == 403 and succeeded == 0:
+                raise
             log_fn(f"  Failed: {name} -> {exc}")
             failed += 1
 
